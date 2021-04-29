@@ -1,0 +1,318 @@
+# Fail if all the required confg files are not found
+- name: Check that the required config files are present
+  hosts: localhost
+  become: false
+  tasks:
+    # serviceAccountKey.json
+    - name: Check that the serviceAccountKey.json file exists
+      ansible.builtin.stat:
+        path: ./templates/serviceAccountKey.json
+      register: file_result
+    - name: Fail if ./templates/serviceAccountKey.json is missing
+      ansible.builtin.fail:
+        msg: Could not find ./templates/serviceAccountKey.json
+      when: not file_result.stat.exists
+      # mqtt_logins
+    - name: Check that the mqtt_logins file exists
+      ansible.builtin.stat:
+        path: ./templates/mqtt_logins
+      register: file_result
+    - name: Fail if ./templates/mqtt_logins is missing
+      ansible.builtin.fail:
+        msg: Could not find ./templates/mqtt_logins
+      when: not file_result.stat.exists
+
+# Create a new user so store and run the docker-compose file
+- name: Create a new user
+  hosts: docker_hosts
+  become: true
+  vars_files:
+    - vars/vars.yml
+  tasks:
+    - name: Add a new user (with password)
+      ansible.builtin.user:
+        name: '{{ docker_user_name }}'
+        password: '{{ docker_user_password }}'
+        shell: /bin/bash
+        groups: sudo
+        append: true
+      when: docker_user_password is defined and create_new_user
+
+    - name: Add a new user (without password)
+      ansible.builtin.user:
+        name: '{{ docker_user_name }}'
+        shell: /bin/bash
+        groups: sudo
+        append: true
+      when: create_new_user
+
+    - name: Create a sudoers.d file to allow new user passwordless sudo
+      ansible.builtin.template:
+        src: templates/sudoers.j2
+        dest: /etc/sudoers.d/docker-user
+        owner: root
+        group: root
+        mode: ug+rwX,o=
+      when: create_new_user
+
+- name: Configure SSH & Initial Server Setup
+  hosts: docker_hosts
+  become: true
+  vars_files:
+    - vars/vars.yml
+  roles:
+    # Add SSH keys for the current SSH user
+    - role: configure_ssh
+      ssh_key_user: '{{ ansible_ssh_user }}'
+      ssh_keys:
+        - '{{ ssh_key_location }}'
+    # Add SSH keys for the new user (if created)
+    - role: configure_ssh
+      ssh_key_user: '{{ docker_user_name }}'
+      ssh_keys:
+        - '{{ ssh_key_location }}'
+      when: create_new_user
+  tasks:
+    - name: Update packages
+      ansible.builtin.apt:
+        update_cache: true
+        upgrade: dist
+      when: run_apt_update
+
+- name: Install Docker & docker-compose
+  hosts: docker_hosts
+  become: true
+  vars_files:
+    - vars/vars.yml
+  roles:
+    # Install Docker (x86)
+    - role: geerlingguy.docker
+      docker_users:
+        - '{{ ansible_ssh_user }}'
+        - '{{ docker_user_name }}'
+      when: ansible_architecture == 'x86_64'
+    # Install Docker (x86) - no new user
+    - role: geerlingguy.docker
+      docker_users:
+        - '{{ ansible_ssh_user }}'
+      when: ansible_architecture == 'x86_64' and not create_new_user
+    # Install Docker (arm)
+    - role: geerlingguy.docker_arm
+      docker_users:
+        - '{{ ansible_ssh_user }}'
+        - '{{ docker_user_name }}'
+      when: ansible_architecture != 'x86_64'
+    # Install Docker (arm) - no new user
+    - role: geerlingguy.docker_arm
+      docker_users:
+        - '{{ ansible_ssh_user }}'
+      when: ansible_architecture != 'x86_64'  and not create_new_user
+  tasks:
+    - name: Download docker-compose bash completion script
+      ansible.builtin.get_url:
+        url: https://raw.githubusercontent.com/docker/compose/1.28.6/contrib/completion/bash/docker-compose
+        dest: /etc/bash_completion.d/docker-compose
+
+# Spin up a temportary InfluxDB container to generate an admin token
+- name: Setup InfluxDB
+  hosts: docker_hosts
+  vars_files:
+    - vars/vars.yml
+  become: true
+  tasks:
+    - name: Create a directory to store the initial docker files
+      ansible.builtin.file:
+        path: '~/docker/initial'
+        state: directory
+
+    - name: Upload the bootstrap docker-compose file
+      ansible.builtin.template:
+        src: templates/docker-compose.initial.j2.yml
+        dest: '~/docker/initial/docker-compose.yml'
+
+    - name: Bring up the bootstrap containers
+      ansible.builtin.shell: |
+        docker-compose up -d
+      args:
+        chdir: ~/docker/initial
+
+    - name: Wait 30 seconds for the database to be initialised
+      pause:
+        seconds: '30'
+
+    - name: Get the admin token from the InfluxDB container
+      ansible.builtin.shell: |
+        docker exec -it initial_influxdb2_1 influx auth list --user {{ influx_username }} | awk 'FNR == 2 {print $4}' | tr "\t" "\n"
+      register: influx_admin_token
+
+    - name: Save the InfluxDB admin token as a fact
+      ansible.builtin.set_fact: 'influx_admin_token = {{ influx_admin_token.stdout }}'
+      when: "'list' not in influx_admin_token.stdout"
+
+    - name: Fail if the InfluxDB admin token could not be read
+      ansible.builtin.fail:
+        msg: Unable to get InfluxDB admin token
+      when: "'list' in influx_admin_token.stdout"
+
+    - name: Bring down the bootstrap container
+      ansible.builtin.shell: |
+        docker-compose down
+      args:
+        chdir: ~/docker/initial
+
+    - name: Remove the initial docker-compose files
+      ansible.builtin.file:
+        path: ~/docker/initial
+        state: absent
+
+# Create all of the required directories and config files for each container
+- name: Create the required directories and files
+  hosts: docker_hosts
+  vars_files:
+    - vars/vars.yml
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Create the docker-compose directory
+      ansible.builtin.file:
+        state: directory
+        path: '/home/{{ docker_user_name }}/docker/vehicles'
+        owner: '{{ docker_user_name }}'
+        group: '{{ docker_user_name }}'
+
+    - name: Create the directories for Traefik
+      ansible.builtin.file:
+        state: directory
+        path: '/opt/{{ item }}'
+        owner: '{{ docker_user_name }}'
+        group: docker
+      loop:
+        - traefik
+        - traefik/rules
+        - traefik/acme
+        - shared
+
+    - name: Create the the initial files for Traefik
+      ansible.builtin.file:
+        state: touch
+        path: '/opt/{{ item }}'
+      loop:
+        - traefik/traefik.log
+        - traefik/acme/acme.json
+
+    - name: Create the directories for InfluxDB
+      ansible.builtin.file:
+        state: directory
+        path: '/opt/{{ item }}'
+      loop:
+        - influxdb
+        - influxdb/data
+        - influxdb/backups
+        - influxdb/scripts
+
+    - name: Upload the InfluxDB setup script
+      ansible.builtin.template:
+        src: templates/influx-setup.j2.sh
+        dest: /opt/influxdb/scripts/influx-setup.sh
+
+    - name: Create the directories for Telegraf
+      ansible.builtin.file:
+        state: directory
+        path: '/opt/telegraf'
+
+    - name: Create the directories for Mosquitto
+      ansible.builtin.file:
+        state: directory
+        path: '/opt/{{ item }}'
+        owner: '{{ docker_user_name }}'
+        group: docker
+      loop:
+        - mosquitto
+        - mosquitto/data
+        - mosquitto/config
+
+    - name: Create the mosquitto config file
+      ansible.builtin.template:
+        src: templates/mosquitto.conf
+        dest: /opt/mosquitto/config/mosquitto.conf
+
+    - name: Upload the Mosquitto password file
+      ansible.builtin.template:
+        src: templates/mqtt_logins
+        dest: /opt/mosquitto/passwd
+
+    - name: Hash the passwords in the Mosquitto passwords file using a temporary container
+      ansible.builtin.shell: |
+        docker run --rm --mount type=bind,source=/opt/mosquitto/passwd,target=/mosquitto/passwd eclipse-mosquitto:openssl mosquitto_passwd -U /mosquitto/passwd
+
+    - name: Upload the Telegraf config file
+      ansible.builtin.template:
+        src: templates/telegraf.conf.j2
+        dest: /opt/telegraf/telegraf.conf
+
+    - name: Create the directories for Prometheus
+      ansible.builtin.file:
+        state: directory
+        path: '/opt/{{ item }}'
+        owner: '{{ docker_user_name }}'
+        group: docker
+      loop:
+        - prometheus
+        - alertmanager
+
+    - name: Create the directories for the vehicles API/Dashboard
+      ansible.builtin.file:
+        state: directory
+        path: '/opt/{{ item }}'
+        owner: '{{ docker_user_name }}'
+        group: docker
+      loop:
+        - vehicles
+        - vehicles/api
+        - vehicles/dashboard
+
+    - name: Upload the API serviceAccountKey.json file
+      ansible.builtin.template:
+        src: templates/serviceAccountKey.json
+        dest: /opt/vehicles/api/serviceAccountKey.json
+
+    - name: Set ownership and permissions on the new directories and files
+      ansible.builtin.file:
+        path: '/opt/{{ item }}'
+        state: directory
+        owner: '{{ docker_user_name }}'
+        group: docker
+        mode: u+rwx,g+rwx,o-rwx
+        recurse: true
+      loop:
+        - influxdb
+        - mosquitto
+        - telegraf
+        - traefik
+        - api
+        - dashboard
+        - prometheus
+        - alertmanager
+        - shared
+
+# Upload the main docker-compose file and bring the containers online
+- name: Deploy Everything
+  hosts: docker_hosts
+  vars_files:
+    - vars/vars.yml
+  become: true
+  become_user: '{{ docker_user_name }}'
+  become_method: sudo
+  tasks:
+    - name: Upload the docker-compose file
+      ansible.builtin.template:
+        src: templates/docker-compose.j2.yml
+        dest: '/home/{{ docker_user_name }}/docker/vehicles/docker-compose.yml'
+        owner: '{{ docker_user_name }}'
+        group: '{{ docker_user_name }}'
+
+    - name: Bring up the containers
+      ansible.builtin.shell: |
+        docker-compose up -d
+      args:
+        chdir: '/home/{{ docker_user_name }}/docker/vehicles'

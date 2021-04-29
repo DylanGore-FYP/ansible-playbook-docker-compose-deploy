@@ -1,0 +1,45 @@
+# General
+run_apt_update: true
+
+# Docker User
+create_new_user: true
+docker_user_name: newUser # change
+# docker_user_password: '' # Uncomment if you want to set the user password, use mkpasswd  to generate a password hash
+
+# SSH
+ssh_key_location: '~/.ssh/id_rsa.pub' # change if required
+
+# InfluxDB
+influx_username: 'user' # change
+influx_password: 'SecurePassword01' # change
+influx_org: 'myorg' # change
+influx_bucket: vehicles
+
+# Telegraf
+telegraf_mqtt_username: 'user' # change
+telegraf_mqtt_password: 'password' # change
+telegraf_mqtt_base_topic: vehicles # must match the base value in the vehicle config.toml file
+telegraf_mqtt_server: tcp://mosquitto:1883
+telegraf_influx_server: http://influxdb:8086
+telegraf_influx_bucket: '{{ influx_bucket }}'
+telegraf_influx_org: '{{ influx_org }}'
+telegraf_influx_token: '{{ influx_admin_token.stdout_lines[0] }}' # change if using a custom token
+
+# API
+api_influx_host: influxdb
+api_influx_port: 8086
+api_influx_database: '{{ influx_bucket }}'
+api_influx_username: '{{ influx_username }}'
+api_influx_password: '{{ influx_password }}'
+api_admin_uid: '' # Set if you need to make a user an admin
+
+# Dashboard
+dashboard_firebase_api_key: '' # change
+dashboard_auth_domain: '' # change
+dashboard_project_id: '' # change
+dashboard_storage_bucket: '' # change
+dashboard_message_sender_id: 123 # change
+dashboard_app_id: '' # change
+dashboard_enable_user_registration: true
+dashboard_api_location: 'http://{{ ansible_default_ipv4.address }}:5000'
+dashboard_login_providers: '' # change if required
