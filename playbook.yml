@@ -44,7 +44,7 @@
         shell: /bin/bash
         groups: sudo
         append: true
-      when: create_new_user
+      when: docker_user_password is not defined and create_new_user
 
     - name: Create a sudoers.d file to allow new user passwordless sudo
       ansible.builtin.template:
@@ -173,13 +173,6 @@
   become: true
   gather_facts: false
   tasks:
-    - name: Create the docker-compose directory
-      ansible.builtin.file:
-        state: directory
-        path: '/home/{{ docker_user_name }}/docker/vehicles'
-        owner: '{{ docker_user_name }}'
-        group: '{{ docker_user_name }}'
-
     - name: Create the directories for Traefik
       ansible.builtin.file:
         state: directory
@@ -300,10 +293,16 @@
   hosts: docker_hosts
   vars_files:
     - vars/vars.yml
-  become: true
+  become: false
   become_user: '{{ docker_user_name }}'
   become_method: sudo
   tasks:
+    - name: Create the docker-compose directory
+      ansible.builtin.file:
+        state: directory
+        path: '/home/{{ docker_user_name }}/docker/vehicles'
+        owner: '{{ docker_user_name }}'
+        group: '{{ docker_user_name }}'
     - name: Upload the docker-compose file
       ansible.builtin.template:
         src: templates/docker-compose.j2.yml
