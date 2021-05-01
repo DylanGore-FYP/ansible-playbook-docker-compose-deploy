@@ -6,3 +6,6 @@
 # Ansible Galaxy: geerlingguy
 - name: geerlingguy.docker
 - name: geerlingguy.docker_arm
+
+# Ansible Galaxy: cloudalchemy
+- name: cloudalchemy.node_exporter

@@ -16,3 +16,4 @@ inventory
 serviceAccountKey.json
 mqtt_logins
 vars.yml
+alertmanager.yml

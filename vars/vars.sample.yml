@@ -32,6 +32,7 @@ api_influx_database: '{{ influx_bucket }}'
 api_influx_username: '{{ influx_username }}'
 api_influx_password: '{{ influx_password }}'
 api_admin_uid: '' # Set if you need to make a user an admin
+api_enable_metrics: true
 
 # Dashboard
 dashboard_firebase_api_key: '' # change

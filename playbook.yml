@@ -21,6 +21,15 @@
       ansible.builtin.fail:
         msg: Could not find ./templates/mqtt_logins
       when: not file_result.stat.exists
+      # alertmanager.yml
+    - name: Check that the alertmanager.yml file exists
+      ansible.builtin.stat:
+        path: ./templates/alertmanager.yml
+      register: file_result
+    - name: Fail if ./templates/alertmanager.yml is missing
+      ansible.builtin.fail:
+        msg: Could not find ./templates/alertmanager.yml
+      when: not file_result.stat.exists
 
 # Create a new user so store and run the docker-compose file
 - name: Create a new user
@@ -72,6 +81,8 @@
       ssh_keys:
         - '{{ ssh_key_location }}'
       when: create_new_user
+    # Install Node Exporter for Prometheus metrics
+    - role: cloudalchemy.node_exporter
   tasks:
     - name: Update packages
       ansible.builtin.apt:
@@ -289,10 +300,32 @@
         state: directory
         path: '/opt/{{ item }}'
         owner: '{{ docker_user_name }}'
-        group: docker
+        group: nogroup
+        mode: u+rwx,g+r,o-rwx
       loop:
         - prometheus
         - alertmanager
+
+    - name: Upload the Prometheus config file
+      ansible.builtin.template:
+        src: templates/prometheus.j2.yml
+        dest: /opt/prometheus/prometheus.yml
+        owner: '{{ docker_user_name }}'
+        group: nogroup
+
+    - name: Upload the Prometheus rules file
+      ansible.builtin.copy:
+        src: templates/rules.yml
+        dest: /opt/prometheus/rules.yml
+        owner: '{{ docker_user_name }}'
+        group: nogroup
+
+    - name: Upload the AlertManager config file
+      ansible.builtin.template:
+        src: templates/alertmanager.yml
+        dest: /opt/alertmanager/alertmanager.yml
+        owner: '{{ docker_user_name }}'
+        group: nogroup
 
     - name: Create the directories for the vehicles API/Dashboard
       ansible.builtin.file:
@@ -325,8 +358,6 @@
         - traefik
         - api
         - dashboard
-        - prometheus
-        - alertmanager
         - shared
 
 # Upload the main docker-compose file and bring the containers online
