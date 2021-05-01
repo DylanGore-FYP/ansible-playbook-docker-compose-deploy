@@ -18,7 +18,7 @@ services:
       DOCKER_INFLUXDB_INIT_PASSWORD: '{{ influx_password }}'
       DOCKER_INFLUXDB_INIT_ORG: '{{ influx_org }}'
       DOCKER_INFLUXDB_INIT_BUCKET: '{{ influx_bucket }}'
-      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: '{{ hostvars['docker_01']['influx_admin_token'].stdout }}'
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: '{{ influx_admin_token }}'
       V1_DB_NAME: '{{ influx_bucket }}'
       V1_RP_NAME: '{{ influx_username }}'
       V1_AUTH_USERNAME: '{{ influx_username }}'
@@ -54,7 +54,7 @@ services:
     restart: unless-stopped
     networks:
       ingest:
-          ipv4_address: 172.16.1.203
+        ipv4_address: 172.16.1.203
     security_opt:
       - no-new-privileges:true
     volumes:

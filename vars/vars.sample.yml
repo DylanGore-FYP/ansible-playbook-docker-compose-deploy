@@ -23,7 +23,7 @@ telegraf_mqtt_server: tcp://mosquitto:1883
 telegraf_influx_server: http://influxdb:8086
 telegraf_influx_bucket: '{{ influx_bucket }}'
 telegraf_influx_org: '{{ influx_org }}'
-telegraf_influx_token: '{{ influx_admin_token.stdout_lines[0] }}' # change if using a custom token
+telegraf_influx_token: '{{ influx_admin_token }}' # change if using a custom token
 
 # API
 api_influx_host: influxdb

@@ -120,50 +120,91 @@
     - vars/vars.yml
   become: true
   tasks:
+    - name: Check to see if the influx-admin-token file exists
+      ansible.builtin.stat:
+        path: ~/.ansible-influx-admin-token
+      register: influx_token_file
+
+    - name: Read Influx admin token from file
+      ansible.builtin.shell:
+        cmd: cat ~/.ansible-influx-admin-token
+      register: influx_token_file_contents
+      when: influx_token_file.stat.exists
+
+    - name: Save the InfluxDB admin token as a fact (from file)
+      ansible.builtin.set_fact:
+        influx_admin_token: '{{ influx_token_file_contents.stdout }}'
+      when: influx_token_file.stat.exists
+
     - name: Create a directory to store the initial docker files
       ansible.builtin.file:
         path: '~/docker/initial'
         state: directory
+      when: not influx_token_file.stat.exists
 
     - name: Upload the bootstrap docker-compose file
       ansible.builtin.template:
         src: templates/docker-compose.initial.j2.yml
         dest: '~/docker/initial/docker-compose.yml'
+      when: not influx_token_file.stat.exists
 
     - name: Bring up the bootstrap containers
       ansible.builtin.shell: |
         docker-compose up -d
       args:
         chdir: ~/docker/initial
+      when: not influx_token_file.stat.exists
 
     - name: Wait 30 seconds for the database to be initialised
       pause:
         seconds: '30'
+      when: not influx_token_file.stat.exists
 
     - name: Get the admin token from the InfluxDB container
       ansible.builtin.shell: |
         docker exec -it initial_influxdb2_1 influx auth list --user {{ influx_username }} | awk 'FNR == 2 {print $4}' | tr "\t" "\n"
-      register: influx_admin_token
+      register: influx_admin_token_result
+      when: not influx_token_file.stat.exists
 
     - name: Save the InfluxDB admin token as a fact
-      ansible.builtin.set_fact: 'influx_admin_token = {{ influx_admin_token.stdout }}'
-      when: "'list' not in influx_admin_token.stdout"
+      ansible.builtin.set_fact:
+        influx_admin_token: '{{ influx_admin_token_result.stdout }}'
+      when: "not influx_token_file.stat.exists and 'list' not in influx_admin_token_result.stdout"
 
     - name: Fail if the InfluxDB admin token could not be read
       ansible.builtin.fail:
         msg: Unable to get InfluxDB admin token
-      when: "'list' in influx_admin_token.stdout"
+      when: "not influx_token_file.stat.exists and 'list' in influx_admin_token_result.stdout"
+
+    - name: Write the InfluxDB token to a file
+      ansible.builtin.copy:
+        content: '{{ influx_admin_token }}'
+        dest: ~/.ansible-influx-admin-token
+        mode: u+rw,g-wx,o-rwx
+      when: not influx_token_file.stat.exists
+
+    - name: Copy the token file to the docker user's home directory
+      ansible.builtin.copy:
+        remote_src: true
+        src: ~/.ansible-influx-admin-token
+        dest: '/home/{{ docker_user_name }}/.ansible-influx-admin-token'
+        owner: '{{ docker_user_name }}'
+        group: '{{ docker_user_name }}'
+        mode: u+rw,g-wx,o-rwx
+      when: not influx_token_file.stat.exists
 
     - name: Bring down the bootstrap container
       ansible.builtin.shell: |
         docker-compose down
       args:
         chdir: ~/docker/initial
+      when: not influx_token_file.stat.exists
 
     - name: Remove the initial docker-compose files
       ansible.builtin.file:
         path: ~/docker/initial
         state: absent
+      when: not influx_token_file.stat.exists
 
 # Create all of the required directories and config files for each container
 - name: Create the required directories and files
@@ -213,6 +254,11 @@
         state: directory
         path: '/opt/telegraf'
 
+    - name: Upload the Telegraf config file
+      ansible.builtin.template:
+        src: templates/telegraf.conf.j2
+        dest: /opt/telegraf/telegraf.conf
+
     - name: Create the directories for Mosquitto
       ansible.builtin.file:
         state: directory
@@ -237,11 +283,6 @@
     - name: Hash the passwords in the Mosquitto passwords file using a temporary container
       ansible.builtin.shell: |
         docker run --rm --mount type=bind,source=/opt/mosquitto/passwd,target=/mosquitto/passwd eclipse-mosquitto:openssl mosquitto_passwd -U /mosquitto/passwd
-
-    - name: Upload the Telegraf config file
-      ansible.builtin.template:
-        src: templates/telegraf.conf.j2
-        dest: /opt/telegraf/telegraf.conf
 
     - name: Create the directories for Prometheus
       ansible.builtin.file:
@@ -294,9 +335,24 @@
   vars_files:
     - vars/vars.yml
   become: false
-  become_user: '{{ docker_user_name }}'
-  become_method: sudo
   tasks:
+    # Read and set the influx-admin-toek if it's not already defined
+    - name: Check to see if the influx-admin-token file exists (docker-user)
+      ansible.builtin.stat:
+        path: '/home/{{ docker_user_name }}/.ansible-influx-admin-token'
+      register: influx_token_file
+      when: not influx_admin_token is defined
+
+    - name: Read Influx admin token from file
+      ansible.builtin.shell:
+        cmd: cat '/home/{{ docker_user_name }}/.ansible-influx-admin-token'
+      register: influx_token_file_contents
+      when: not influx_admin_token is defined and influx_token_file.stat.exists
+
+    - name: Save the InfluxDB admin token as a fact
+      ansible.builtin.set_fact:
+        influx_admin_token: '{{ influx_token_file_contents.stdout }}'
+      when: "not influx_admin_token is defined and influx_token_file.stat.exists and 'list' not in influx_token_file_contents.stdout"
     - name: Create the docker-compose directory
       ansible.builtin.file:
         state: directory
