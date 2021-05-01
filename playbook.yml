@@ -334,7 +334,7 @@
   hosts: docker_hosts
   vars_files:
     - vars/vars.yml
-  become: false
+  become: true
   tasks:
     # Read and set the influx-admin-toek if it's not already defined
     - name: Check to see if the influx-admin-token file exists (docker-user)
@@ -353,21 +353,28 @@
       ansible.builtin.set_fact:
         influx_admin_token: '{{ influx_token_file_contents.stdout }}'
       when: "not influx_admin_token is defined and influx_token_file.stat.exists and 'list' not in influx_token_file_contents.stdout"
+
     - name: Create the docker-compose directory
+      become: true
+      become_user: '{{ docker_user_name }}'
+      become_method: sudo
       ansible.builtin.file:
         state: directory
-        path: '/home/{{ docker_user_name }}/docker/vehicles'
+        path: '~/docker/vehicles'
         owner: '{{ docker_user_name }}'
         group: '{{ docker_user_name }}'
+        mode: u+wrx,g+wr,o-wrx
+
     - name: Upload the docker-compose file
       ansible.builtin.template:
         src: templates/docker-compose.j2.yml
         dest: '/home/{{ docker_user_name }}/docker/vehicles/docker-compose.yml'
         owner: '{{ docker_user_name }}'
         group: '{{ docker_user_name }}'
+        mode: u+wrx,g+wr,o-wrx
 
     - name: Bring up the containers
-      ansible.builtin.shell: |
-        docker-compose up -d
+      ansible.builtin.shell:
+        cmd: "sudo su - {{ docker_user_name }} -c 'docker-compose -f /home/{{ docker_user_name }}/docker/vehicles/docker-compose.yml up -d'"
       args:
         chdir: '/home/{{ docker_user_name }}/docker/vehicles'
