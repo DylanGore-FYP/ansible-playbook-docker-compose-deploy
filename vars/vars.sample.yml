@@ -1,5 +1,6 @@
 # General
 run_apt_update: true
+domain_name: example.com
 
 # Docker User
 create_new_user: true

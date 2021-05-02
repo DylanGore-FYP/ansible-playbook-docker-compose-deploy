@@ -396,6 +396,13 @@
         group: '{{ docker_user_name }}'
         mode: u+wrx,g+wr,o-wrx
 
+    - name: Create the Docker proxy network
+      ansible.builtin.shell:
+        cmd: "sudo su - {{ docker_user_name }} -c 'docker network create --gateway 10.0.90.1 --subnet 10.0.90.0/24 proxy'"
+      args:
+        chdir: '/home/{{ docker_user_name }}/docker/vehicles'
+      ignore_errors: true
+
     - name: Upload the docker-compose file
       ansible.builtin.template:
         src: templates/docker-compose.j2.yml
